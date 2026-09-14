@@ -1,0 +1,61 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "1. Run Ingestion Pipeline (Week 1)",
+      "type": "shell",
+      "command": "${workspaceFolder}/.venv/Scripts/python",
+      "args": ["${workspaceFolder}/ingestion.py"],
+      "group": {
+        "kind": "build",
+        "isDefault": false
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "2. Run Retrieval & Search (Week 2)",
+      "type": "shell",
+      "command": "${workspaceFolder}/.venv/Scripts/python",
+      "args": ["${workspaceFolder}/retrieval.py"],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "3. Run Unit Tests",
+      "type": "shell",
+      "command": "${workspaceFolder}/.venv/Scripts/python",
+      "args": ["${workspaceFolder}/test_pipeline.py"],
+      "group": {
+        "kind": "test",
+        "isDefault": true
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Generate Sample PDF Fixture",
+      "type": "shell",
+      "command": "${workspaceFolder}/.venv/Scripts/python",
+      "args": ["${workspaceFolder}/create_sample_pdf.py"],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": []
+    }
+  ]
+}
