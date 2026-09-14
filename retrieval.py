@@ -147,3 +147,39 @@ def run_retrieval_validation(
         return
 
     print(f"Total Chunks to Vectorize:        {len(chunks)}")
+# 2. Convert all chunks into a NumPy embedding matrix & benchmark time
+    start_time = time.perf_counter()
+    document_vectors = generate_embeddings(chunks)
+    embedding_duration = time.perf_counter() - start_time
+    
+    print(f"Embedding Execution Time:         {embedding_duration:.3f} seconds")
+    print(f"NumPy Matrix Shape:               {document_vectors.shape}")
+    print("-" * 60)
+
+    # 3. Vectorize sample query
+    query_vector = generate_embeddings([query])[0]
+    
+    # 4. Execute search_top_k
+    top_results = search_top_k(query_vector, document_vectors, top_k=top_k)
+
+    # 5. Format and write search results
+    with open(output_debug_path, "w", encoding="utf-8") as f:
+        f.write(f"QUERY: {query}\n")
+        f.write("-" * 50 + "\n")
+        
+        for rank, (chunk_idx, score) in enumerate(top_results, start=1):
+            f.write(f"RANK {rank} | SIMILARITY SCORE: {score:.4f} | CHUNK INDEX: {chunk_idx}\n")
+            f.write(f"{chunks[chunk_idx]}\n")
+            f.write("-" * 50 + "\n")
+            
+    print(f"[SUCCESS] Top-{top_k} results written to '{output_debug_path}'")
+    print("\nRetrieval Preview:")
+    for rank, (chunk_idx, score) in enumerate(top_results, start=1):
+        preview = chunks[chunk_idx][:100].replace("\n", " ")
+        print(f"  Rank {rank} [Score: {score:.4f}, Chunk #{chunk_idx}]: {preview}...")
+    print("=" * 60)
+
+
+if __name__ == "__main__":
+    benchmark_query = "What is the policy guidelines mentioned?"
+    run_retrieval_validation(query=benchmark_query)
