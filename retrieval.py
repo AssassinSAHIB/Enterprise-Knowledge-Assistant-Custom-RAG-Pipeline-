@@ -77,3 +77,73 @@ def search_top_k(
     document_vectors: np.ndarray,
     top_k: int = 3
 ) -> List[Tuple[int, float]]:
+    """
+    Calculates cosine similarity across all document vectors and returns
+    the indices and similarity scores of the top K matches in descending order.
+    
+    Args:
+        query_vector (np.ndarray): 1D array representing the encoded query.
+        document_vectors (np.ndarray): 2D array of shape (N, D) containing document embeddings.
+        top_k (int): Number of top matches to retrieve. Default is 3.
+        
+    Returns:
+        List[Tuple[int, float]]: List of (chunk_index, similarity_score) sorted descending.
+    """
+    if len(document_vectors) == 0:
+        return []
+        
+    scores: List[Tuple[int, float]] = []
+    
+    for idx, doc_vec in enumerate(document_vectors):
+        sim = cosine_similarity(query_vector, doc_vec)
+        scores.append((idx, sim))
+        
+    # Sort by similarity score in descending order
+    scores.sort(key=lambda x: x[1], reverse=True)
+    
+    return scores[:top_k]
+
+
+def load_chunks_from_debug_file(file_path: str = "debug_chunks.txt") -> List[str]:
+    """
+    Parses debug_chunks.txt file and returns the list of extracted chunks.
+    """
+    if not os.path.exists(file_path):
+        return []
+        
+    with open(file_path, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    # Pattern matches chunk blocks produced by ingestion.py
+    pattern = r"={50}\nCHUNK \d+ \| Length: \d+\n={50}\n(.*?)(?=\n={50}|$)"
+    matches = re.findall(pattern, content, flags=re.DOTALL)
+    
+    chunks = [m.strip() for m in matches if m.strip()]
+    return chunks
+
+
+def run_retrieval_validation(
+    query: str = "What is the policy guidelines mentioned?",
+    chunks_file: str = "debug_chunks.txt",
+    output_debug_path: str = "debug_retrieval_results.txt",
+    top_k: int = 3
+) -> None:
+    """
+    Executes the vector storage, manual search, and retrieval validation pipeline.
+    """
+    print("=" * 60)
+    print("WEEK 2: RETRIEVAL & VECTOR SEARCH EXECUTION")
+    print("=" * 60)
+    
+    # 1. Load chunks from debug_chunks.txt or generate via ingestion.py
+    chunks = load_chunks_from_debug_file(chunks_file)
+    if not chunks:
+        print(f"'{chunks_file}' not found or empty. Running ingestion pipeline...")
+        from ingestion import run_ingestion_pipeline
+        chunks = run_ingestion_pipeline()
+        
+    if not chunks:
+        print("[ERROR] No chunks available for vectorization.")
+        return
+
+    print(f"Total Chunks to Vectorize:        {len(chunks)}")
