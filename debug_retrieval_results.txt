@@ -1,0 +1,29 @@
+QUERY: What is the policy guidelines mentioned?
+--------------------------------------------------
+RANK 1 | SIMILARITY SCORE: 0.5727 | CHUNK INDEX: 0
+Enterprise Knowledge & Compliance Manual
+Document Version: 2026.2 | Status: Approved | Distribution: Internal Only
+1. Corporate Policy Guidelines & Code of Conduct
+All employees, contractors, and partners must strictly adhere to the enterprise policy guidelines. The core policy
+guidelines mandate that organizational assets must be used exclusively for authorized business operations.
+Employees are expected to conduct all communications with transparency, integrity, and ethical compliance.
+Any con
+--------------------------------------------------
+RANK 2 | SIMILARITY SCORE: 0.4951 | CHUNK INDEX: 1
+arency, integrity, and ethical compliance.
+Any conflict of interest, whether financial, interpersonal, or external consultancy, must be disclosed immediately
+to the compliance officer. Violations of these policy guidelines may result in corrective actions up to and
+including termination of employment.
+2. Information Security and Data Protection Policies
+Data classification consists of four levels: Public, Internal, Confidential, and Restricted. Customer personally
+identifiable information (PII)
+--------------------------------------------------
+RANK 3 | SIMILARITY SCORE: 0.4139 | CHUNK INDEX: 3
+or
+proprietary codebases on personal machines or unapproved cloud repositories.
+3. Remote Work & Device Security Protocol
+The remote work policy guidelines state that team members working outside company facilities must connect
+through authorized corporate VPN networks. Corporate-issued hardware must remain updated with automated
+security patches and enterprise endpoint detection software. Public Wi-Fi networks must never be used without
+an active encrypted corporate tunnel. Physical documents c
+--------------------------------------------------
