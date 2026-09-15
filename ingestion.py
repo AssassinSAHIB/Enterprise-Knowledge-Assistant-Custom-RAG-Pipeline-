@@ -62,7 +62,6 @@ def run_ingestion_pipeline(
         raw_text = extract_text_from_pdf(pdf_path)
     except FileNotFoundError:
         print(f"[ERROR] Target file '{pdf_path}' does not exist.")
-        print("Tip: Run create_sample_pdf.py to create the benchmark fixture.")
         return []
     except Exception as e:
         print(f"[ERROR] Failed to extract text from '{pdf_path}': {e}")
