@@ -19,7 +19,7 @@ from typing import List, Tuple
 # Constants
 # ---------------------------------------------------------------------------
 
-GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
+GROQ_API_URL = "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"
 DEFAULT_MODEL = "llama-3.3-70b-versatile"
 REQUEST_TIMEOUT_SECONDS = 60  # Hard timeout per API call
 
