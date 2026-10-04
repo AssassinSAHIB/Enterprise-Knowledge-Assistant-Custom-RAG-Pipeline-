@@ -4,10 +4,12 @@ Module: app.py
 Enterprise Knowledge Assistant (Custom RAG Pipeline)
 
 Assembles ingestion.py + retrieval.py + llm_generator.py into a single
-interactive Streamlit application with Digital Retro Dark/Bright themes
+interactive Streamlit application with Retro Dark/Bright themes
 and Liquid Glass (Glassmorphism) UI elements.
 """
 
+import hashlib
+import html
 import time
 import tempfile
 import os
@@ -19,9 +21,14 @@ import numpy as np
 # Ensure the project directory is in path for local module imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from ingestion import extract_text_from_pdf, custom_text_splitter
+from ingestion import (
+    SUPPORTED_EXTENSIONS,
+    DocumentParseError,
+    custom_text_splitter,
+    extract_text,
+)
 from retrieval import generate_embeddings, search_top_k
-from llm_generator import build_grounded_prompt, query_llm_api
+from llm_generator import DEFAULT_MODEL, build_grounded_prompt, get_api_key, query_llm_api
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PAGE CONFIG
@@ -50,6 +57,8 @@ if "retrieval_results" not in st.session_state:
     st.session_state.retrieval_results = []
 if "latency" not in st.session_state:
     st.session_state.latency = None
+if "doc_key" not in st.session_state:
+    st.session_state.doc_key = None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -163,6 +172,7 @@ html, body, [class*="css"], .stApp {{
 }}
 .eka-header::before {{
     content: '';
+    pointer-events: none;
     position: absolute;
     top: 0; left: -100%;
     width: 60%; height: 100%;
@@ -287,7 +297,8 @@ html, body, [class*="css"], .stApp {{
 }}
 
 /* ── BUTTONS ─────────────────────────────────────────────────────────── */
-.stButton > button {{
+.stButton > button,
+[data-testid="stFormSubmitButton"] > button {{
     font-family: 'Space Mono', 'Courier New', monospace !important;
     font-weight: 700 !important;
     font-size: 0.78rem !important;
@@ -305,12 +316,14 @@ html, body, [class*="css"], .stApp {{
     cursor: pointer !important;
     width: 100% !important;
 }}
-.stButton > button:hover {{
+.stButton > button:hover,
+[data-testid="stFormSubmitButton"] > button:hover {{
     box-shadow: {btn_hover_shadow} !important;
     transform: translateY(-2px) !important;
     border-color: {accent_cyan} !important;
 }}
-.stButton > button:active {{
+.stButton > button:active,
+[data-testid="stFormSubmitButton"] > button:active {{
     transform: translateY(0px) !important;
 }}
 
@@ -336,6 +349,7 @@ html, body, [class*="css"], .stApp {{
     border-radius: 10px !important;
     background: {glass_bg} !important;
     backdrop-filter: blur(10px) !important;
+    -webkit-backdrop-filter: blur(10px) !important;
     padding: 0.5rem;
     transition: border-color 0.3s ease;
 }}
@@ -354,6 +368,21 @@ html, body, [class*="css"], .stApp {{
 [data-testid="stFileUploaderDropzone"] small,
 [data-testid="stFileUploaderDropzoneInstructions"] span {{
     color: {text_secondary} !important;
+}}
+/* Uploaded-file chip(s) */
+[data-testid="stFileChip"],
+[data-testid="stFileUploaderFile"] {{
+    background: {input_bg} !important;
+    border: 1px solid {glass_border} !important;
+    border-radius: 8px !important;
+}}
+[data-testid="stFileChip"] > div:first-child {{
+    background: {btn_bg} !important;
+}}
+[data-testid="stFileChip"] button,
+[data-testid="stFileUploaderFile"] button {{
+    background: transparent !important;
+    border: none !important;
 }}
 [data-testid="stFileUploader"]:hover {{
     border-color: {accent_cyan} !important;
@@ -463,6 +492,7 @@ html, body, [class*="css"], .stApp {{
     border: 1px solid {divider_color} !important;
     border-radius: 10px !important;
     backdrop-filter: blur(10px) !important;
+    -webkit-backdrop-filter: blur(10px) !important;
     margin-bottom: 0.6rem !important;
     overflow: hidden;
 }}
@@ -504,6 +534,18 @@ hr {{
     margin: 1.5rem 0 !important;
 }}
 
+/* ── GLASS FALLBACK ─────────────────────────────────────────────────
+   Browsers without backdrop-filter (older Firefox, some Linux builds)
+   would otherwise show low-contrast translucent panels. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {{
+    [data-testid="stSidebar"],
+    .eka-header, .status-card, .response-card,
+    [data-testid="stFileUploader"], [data-testid="stExpander"],
+    [data-testid="stAlert"] {{
+        background: {bg_secondary} !important;
+    }}
+}}
+
 /* ── HIDE STREAMLIT DEFAULT DECORATION ─────────────────────────────── */
 #MainMenu, footer, header {{ visibility: hidden; }}
 [data-testid="stDecoration"] {{ display: none; }}
@@ -534,11 +576,19 @@ hr {{
     background: {glass_bg} !important;
     border-left-color: {accent_cyan} !important;
     backdrop-filter: blur(10px) !important;
+    -webkit-backdrop-filter: blur(10px) !important;
 }}
 
 /* ── SPINNER ────────────────────────────────────────────────────────── */
 [data-testid="stSpinner"] > div > span {{
     color: {accent_cyan} !important;
+}}
+
+/* ── QUERY FORM (strip default form chrome) ──────────────────────────── */
+[data-testid="stForm"] {{
+    border: none !important;
+    padding: 0 !important;
+    background: transparent !important;
 }}
 
 /* ── RADIO BUTTONS (theme toggle) ───────────────────────────────────── */
@@ -562,22 +612,28 @@ def render_sidebar():
     with st.sidebar:
         st.markdown('<div class="sidebar-brand">⚡ EKA // CONFIG</div>', unsafe_allow_html=True)
 
-        # API Key
+        # API Key (falls back to GROQ_API_KEY from the environment / .env)
+        env_key = get_api_key()
         api_key = st.text_input(
             "Groq API Key",
             type="password",
-            placeholder="gsk_...",
+            placeholder="Loaded from .env" if env_key else "gsk_...",
             key="api_key_input",
-            help="Get your free key at console.groq.com/keys",
+            help="Get your free key at console.groq.com/keys. "
+                 "Leave blank to use GROQ_API_KEY from your .env file.",
         )
+        api_key = get_api_key(api_key)
+        if env_key and not st.session_state.api_key_input.strip():
+            st.caption("Using GROQ_API_KEY from environment")
 
         st.markdown("---")
 
-        # PDF Upload
+        # Document Upload
         uploaded_file = st.file_uploader(
             "Upload Knowledge Document",
-            type=["pdf"],
-            help="Drag and drop a PDF file to populate the knowledge base.",
+            type=[ext.lstrip(".") for ext in SUPPORTED_EXTENSIONS],
+            help="Drag and drop a PDF, Word (.docx), Excel (.xlsx) or CSV file "
+                 "to populate the knowledge base.",
             key="pdf_uploader",
         )
 
@@ -597,9 +653,9 @@ def render_sidebar():
             index=0 if st.session_state.theme == "Retro Dark" else 1,
             key="theme_radio",
         )
-        if theme_choice != st.session_state.theme:
-            st.session_state.theme = theme_choice
-            st.rerun()
+        # CSS is injected after the sidebar renders, so updating state here is
+        # enough - an explicit st.rerun() caused a second, flickering render.
+        st.session_state.theme = theme_choice
 
         st.markdown("---")
 
@@ -612,30 +668,62 @@ def render_sidebar():
 # ─────────────────────────────────────────────────────────────────────────────
 # DOCUMENT PROCESSING
 # ─────────────────────────────────────────────────────────────────────────────
-def process_document(uploaded_file, chunk_size: int, overlap: int):
-    """Extract text, chunk, and embed. Updates session state."""
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-        tmp.write(uploaded_file.read())
+def make_doc_key(file_bytes: bytes, chunk_size: int, overlap: int) -> str:
+    """Identity of a processed document: content hash + chunking settings."""
+    digest = hashlib.sha256(file_bytes).hexdigest()
+    return f"{digest}:{chunk_size}:{overlap}"
+
+
+def process_document(uploaded_file, chunk_size: int, overlap: int) -> bool:
+    """
+    Extract text, chunk, and embed. Updates session state.
+
+    Returns True if the document is ready (freshly processed or already cached
+    for these exact settings), False on failure.
+    """
+    file_bytes = uploaded_file.getvalue()
+    doc_key = make_doc_key(file_bytes, chunk_size, overlap)
+
+    # Same file + same chunking settings: embeddings are already in session state.
+    if doc_key == st.session_state.doc_key and st.session_state.embeddings is not None:
+        return True
+
+    suffix = os.path.splitext(uploaded_file.name)[1].lower()
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        tmp.write(file_bytes)
         tmp_path = tmp.name
 
     try:
-        raw_text = extract_text_from_pdf(tmp_path)
+        raw_text = extract_text(tmp_path)
+    except DocumentParseError as err:
+        st.error(f"Could not read '{uploaded_file.name}': {err}")
+        return False
+    except Exception as err:
+        st.error(f"Unexpected error while reading '{uploaded_file.name}': {err}")
+        return False
     finally:
         os.unlink(tmp_path)
 
     if not raw_text.strip():
-        st.error("Could not extract text from the PDF. Please try a different file.")
-        return
+        st.error(
+            "No extractable text found in this document "
+            "(it may be empty or a scanned / image-only file)."
+        )
+        return False
 
     chunks = custom_text_splitter(raw_text, chunk_size=chunk_size, chunk_overlap=overlap)
+    if not chunks:
+        st.error("The document produced no usable text chunks.")
+        return False
 
     t0 = time.perf_counter()
     embeddings = generate_embeddings(chunks)
     embed_time = time.perf_counter() - t0
 
-    st.session_state.chunks    = chunks
+    st.session_state.chunks     = chunks
     st.session_state.embeddings = embeddings
-    st.session_state.doc_stats = {
+    st.session_state.doc_key    = doc_key
+    st.session_state.doc_stats  = {
         "filename"   : uploaded_file.name,
         "char_count" : len(raw_text),
         "num_chunks" : len(chunks),
@@ -645,6 +733,7 @@ def process_document(uploaded_file, chunk_size: int, overlap: int):
     st.session_state.llm_response      = None
     st.session_state.retrieval_results = []
     st.session_state.latency           = None
+    return True
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -666,11 +755,18 @@ def main():
     # ── Document Processing ──────────────────────────────────────────────────
     if process_clicked:
         if uploaded_file is None:
-            st.warning("Please upload a PDF document in the sidebar first.")
+            st.warning("Please upload a document in the sidebar first.")
         else:
             with st.spinner("Processing document — chunking & vectorising..."):
-                process_document(uploaded_file, chunk_size, overlap)
-            st.success(f"Document processed: {len(st.session_state.chunks)} chunks ready.")
+                ok = process_document(uploaded_file, chunk_size, overlap)
+            if ok:
+                st.success(f"Document processed: {len(st.session_state.chunks)} chunks ready.")
+    elif (
+        uploaded_file is not None
+        and st.session_state.doc_key is not None
+        and make_doc_key(uploaded_file.getvalue(), chunk_size, overlap) != st.session_state.doc_key
+    ):
+        st.info("Document or chunk settings changed — click ⚙ Process Document to re-index.")
 
     # ── Status Card ──────────────────────────────────────────────────────────
     if st.session_state.doc_stats:
@@ -681,7 +777,7 @@ def main():
   <div class="metric-row">
     <div class="metric-item">
       <span class="metric-label">File</span>
-      <span class="metric-value" style="font-size:0.9rem;">{s['filename']}</span>
+      <span class="metric-value" style="font-size:0.9rem;">{html.escape(s['filename'])}</span>
     </div>
     <div class="metric-item">
       <span class="metric-label">Characters</span>
@@ -702,16 +798,18 @@ def main():
     # ── Query Area ───────────────────────────────────────────────────────────
     st.markdown('<div class="section-label">Natural Language Query</div>', unsafe_allow_html=True)
 
-    col_query, col_btn = st.columns([5, 1])
-    with col_query:
-        user_query = st.text_input(
-            "Query",
-            placeholder="Ask a question about your document...",
-            label_visibility="collapsed",
-            key="user_query",
-        )
-    with col_btn:
-        query_clicked = st.button("⚡ Ask", key="query_btn")
+    # A form submits on Enter and avoids a rerun on every widget interaction.
+    with st.form("query_form", clear_on_submit=False, border=False):
+        col_query, col_btn = st.columns([5, 1], vertical_alignment="bottom")
+        with col_query:
+            user_query = st.text_input(
+                "Query",
+                placeholder="Ask a question about your document...",
+                label_visibility="collapsed",
+                key="user_query",
+            )
+        with col_btn:
+            query_clicked = st.form_submit_button("⚡ Ask", use_container_width=True)
 
     # ── Run RAG Pipeline ─────────────────────────────────────────────────────
     if query_clicked:
@@ -719,8 +817,8 @@ def main():
             st.warning("Please enter a question before querying.")
         elif not st.session_state.chunks:
             st.warning("Please process a document first using the sidebar controls.")
-        elif not api_key.strip():
-            st.warning("Please enter your Groq API key in the sidebar.")
+        elif not api_key:
+            st.warning("Please enter your Groq API key in the sidebar or set GROQ_API_KEY in .env.")
         else:
             with st.spinner("Searching knowledge base and generating grounded response..."):
                 # 1. Vectorise query
@@ -747,22 +845,23 @@ def main():
                 # 5. Query LLM API
                 try:
                     response_text, latency = query_llm_api(
-                        prompt, api_key, model_name="llama-3.3-70b-versatile"
+                        prompt, api_key, model_name=DEFAULT_MODEL
                     )
                     st.session_state.llm_response = response_text
                     st.session_state.latency      = latency
                 except Exception as err:
                     st.error(f"API Error: {str(err)}")
                     st.session_state.llm_response = None
+                    st.session_state.latency      = None
 
     # ── Response Display Card ─────────────────────────────────────────────────
     if st.session_state.llm_response:
-        latency_str = f"{st.session_state.latency:.2f}s" if st.session_state.latency else "—"
+        latency_str = f"{st.session_state.latency:.2f}s" if st.session_state.latency is not None else "—"
         st.markdown(f"""
 <div class="response-card">
   <div class="response-card-header">LLM Response // Grounded Output</div>
-  <div class="response-body">{st.session_state.llm_response}</div>
-  <span class="latency-tag">⏱ Latency: {latency_str} &nbsp;|&nbsp; Model: llama-3.3-70b-versatile</span>
+  <div class="response-body">{html.escape(st.session_state.llm_response)}</div>
+  <span class="latency-tag">⏱ Latency: {latency_str} &nbsp;|&nbsp; Model: {html.escape(DEFAULT_MODEL)}</span>
 </div>
 """, unsafe_allow_html=True)
 
@@ -779,7 +878,7 @@ def main():
                     unsafe_allow_html=True,
                 )
                 st.markdown(
-                    f'<div class="chunk-text">{chunk_text}</div>',
+                    f'<div class="chunk-text">{html.escape(chunk_text)}</div>',
                     unsafe_allow_html=True,
                 )
 
@@ -789,7 +888,7 @@ def main():
 <div style="text-align:center; padding: 4rem 0; opacity: 0.4;">
   <div style="font-size: 3rem;">📂</div>
   <div style="font-size: 0.8rem; letter-spacing: 0.15em; text-transform: uppercase; margin-top: 1rem;">
-    Upload a PDF in the sidebar to begin
+    Upload a PDF, DOCX, XLSX or CSV in the sidebar to begin
   </div>
 </div>
 """, unsafe_allow_html=True)

@@ -20,3 +20,6 @@ vscode_rag_extension/
 # OS metadata
 .DS_Store
 Thumbs.db
+
+# Local secrets
+.env

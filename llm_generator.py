@@ -12,16 +12,61 @@ import re
 import time
 import datetime
 import requests
-from typing import List, Tuple
+from typing import List, Optional, Tuple
+
+try:
+    from dotenv import load_dotenv
+except ImportError:  # python-dotenv is optional; fall back to real env vars
+    load_dotenv = None
+
+# Load variables from a local .env file (if present) without overriding
+# variables already exported in the shell.
+if load_dotenv is not None:
+    load_dotenv(
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"),
+        override=False,
+    )
 
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
-GROQ_API_URL = "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"
-DEFAULT_MODEL = "llama-3.3-70b-versatile"
+GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
+DEFAULT_MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
 REQUEST_TIMEOUT_SECONDS = 60  # Hard timeout per API call
+MAX_RETRIES = 2               # Extra attempts on 429 / 5xx / timeout
+MAX_RETRY_WAIT_SECONDS = 20   # Cap on a single backoff sleep
+
+
+def get_api_key(explicit_key: Optional[str] = None) -> str:
+    """
+    Resolve the Groq API key: an explicitly supplied key wins, otherwise
+    GROQ_API_KEY from the environment / .env file. Returns "" if neither is set.
+    """
+    if explicit_key and explicit_key.strip():
+        return explicit_key.strip()
+    return os.environ.get("GROQ_API_KEY", "").strip()
+
+
+def _retry_wait(response: Optional[requests.Response], attempt: int) -> float:
+    """Seconds to wait before retrying: honour Retry-After, else exponential backoff."""
+    if response is not None:
+        retry_after = response.headers.get("retry-after")
+        if retry_after:
+            try:
+                return min(float(retry_after), MAX_RETRY_WAIT_SECONDS)
+            except ValueError:
+                pass
+    return min(2.0 ** attempt, MAX_RETRY_WAIT_SECONDS)
+
+
+def _api_error_detail(response: requests.Response) -> str:
+    """Extract Groq's human-readable error message from a failed response."""
+    try:
+        return response.json()["error"]["message"]
+    except (ValueError, KeyError, TypeError):
+        return response.text[:300].strip()
 
 
 # ---------------------------------------------------------------------------
@@ -97,14 +142,15 @@ def query_llm_api(
         requests.exceptions.HTTPError: On 4xx / 5xx HTTP status codes.
         requests.exceptions.ConnectionError: On network connectivity failure.
     """
-    if not api_key or not api_key.strip():
+    api_key = get_api_key(api_key)
+    if not api_key:
         raise ValueError(
             "API key is empty or None. "
-            "Set GROQ_API_KEY environment variable or pass the key explicitly."
+            "Set GROQ_API_KEY in your environment / .env file or pass the key explicitly."
         )
 
     headers = {
-        "Authorization": f"Bearer {api_key.strip()}",
+        "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
 
@@ -123,23 +169,35 @@ def query_llm_api(
     }
 
     t_start = time.perf_counter()
+    response: Optional[requests.Response] = None
 
-    try:
-        response = requests.post(
-            GROQ_API_URL,
-            headers=headers,
-            json=payload,
-            timeout=REQUEST_TIMEOUT_SECONDS,
-        )
-    except requests.exceptions.Timeout:
-        raise requests.exceptions.Timeout(
-            f"[TIMEOUT] Groq API did not respond within {REQUEST_TIMEOUT_SECONDS}s. "
-            "Check your network connection or retry later."
-        )
-    except requests.exceptions.ConnectionError as conn_err:
-        raise requests.exceptions.ConnectionError(
-            f"[CONNECTION ERROR] Failed to reach Groq API endpoint: {conn_err}"
-        )
+    for attempt in range(MAX_RETRIES + 1):
+        is_last = attempt == MAX_RETRIES
+        try:
+            response = requests.post(
+                GROQ_API_URL,
+                headers=headers,
+                json=payload,
+                timeout=REQUEST_TIMEOUT_SECONDS,
+            )
+        except requests.exceptions.Timeout:
+            if not is_last:
+                time.sleep(_retry_wait(None, attempt))
+                continue
+            raise requests.exceptions.Timeout(
+                f"[TIMEOUT] Groq API did not respond within {REQUEST_TIMEOUT_SECONDS}s "
+                f"after {MAX_RETRIES + 1} attempts. Check your network connection or retry later."
+            )
+        except requests.exceptions.ConnectionError as conn_err:
+            raise requests.exceptions.ConnectionError(
+                f"[CONNECTION ERROR] Failed to reach Groq API endpoint: {conn_err}"
+            )
+
+        # Transient failures: back off and retry.
+        if (response.status_code == 429 or response.status_code >= 500) and not is_last:
+            time.sleep(_retry_wait(response, attempt))
+            continue
+        break
 
     latency = time.perf_counter() - t_start
 
@@ -148,28 +206,30 @@ def query_llm_api(
             "[AUTH ERROR] Invalid Groq API key (HTTP 401). "
             "Verify your key at https://console.groq.com/keys"
         )
+    if response.status_code == 403:
+        raise ValueError(
+            f"[FORBIDDEN] Groq API refused the request (HTTP 403): {_api_error_detail(response)}"
+        )
     if response.status_code == 429:
         raise requests.exceptions.HTTPError(
-            "[RATE LIMIT] Groq API rate limit exceeded (HTTP 429). "
-            "Wait a moment and retry, or upgrade your plan."
+            "[RATE LIMIT] Groq API rate limit exceeded (HTTP 429) after "
+            f"{MAX_RETRIES + 1} attempts. Wait a moment and retry, or upgrade your plan."
         )
     if response.status_code >= 500:
         raise requests.exceptions.HTTPError(
             f"[SERVER ERROR] Groq API returned HTTP {response.status_code}. "
             "The service may be temporarily unavailable."
         )
-
-    try:
-        response.raise_for_status()
-    except requests.exceptions.HTTPError as http_err:
+    if response.status_code >= 400:
         raise requests.exceptions.HTTPError(
-            f"[HTTP ERROR] Groq API responded with HTTP {response.status_code}: {http_err}"
+            f"[HTTP ERROR] Groq API responded with HTTP {response.status_code}: "
+            f"{_api_error_detail(response)}"
         )
 
     try:
         data = response.json()
-        response_text = data["choices"][0]["message"]["content"]
-    except (KeyError, IndexError, ValueError) as parse_err:
+        response_text = data["choices"][0]["message"]["content"] or ""
+    except (KeyError, IndexError, TypeError, ValueError) as parse_err:
         raise ValueError(
             f"[PARSE ERROR] Unexpected API response structure: {parse_err}\n"
             f"Raw response body: {response.text[:500]}"
@@ -293,17 +353,17 @@ if __name__ == "__main__":
     print("=" * 60)
 
     # Step 1: Resolve API key
-    api_key = os.environ.get("GROQ_API_KEY", "").strip()
+    api_key = get_api_key()
     if not api_key:
         print(
-            "\n[ERROR] GROQ_API_KEY environment variable is not set.\n"
-            "Export your key before running:\n"
+            "\n[ERROR] GROQ_API_KEY is not set.\n"
+            "Add it to a .env file next to this script (GROQ_API_KEY=gsk_...) or export it:\n"
             "  Windows (PowerShell): $env:GROQ_API_KEY = 'gsk_...'\n"
             "  Linux/macOS:          export GROQ_API_KEY='gsk_...'\n"
         )
         raise SystemExit(1)
 
-    model_name = os.environ.get("GROQ_MODEL", DEFAULT_MODEL)
+    model_name = DEFAULT_MODEL
 
     # Step 2: Load top retrieved chunks from debug_retrieval_results.txt
     retrieval_debug_path = "debug_retrieval_results.txt"

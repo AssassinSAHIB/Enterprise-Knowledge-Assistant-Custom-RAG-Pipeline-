@@ -43,6 +43,10 @@ def generate_embeddings(text_chunks: List[str]) -> np.ndarray:
     return np.asarray(embeddings, dtype=np.float32)
 
 
+# Norms below this are treated as zero vectors (e.g. empty / symbol-only text).
+_ZERO_NORM_EPS = 1e-10
+
+
 def cosine_similarity(vec_a: np.ndarray, vec_b: np.ndarray) -> float:
     """
     Computes mathematical cosine similarity between two 1D vectors:
@@ -53,17 +57,61 @@ def cosine_similarity(vec_a: np.ndarray, vec_b: np.ndarray) -> float:
         vec_b (np.ndarray): Vector B (1D array).
         
     Returns:
-        float: Cosine similarity score bounded in [-1.0, 1.0].
+        float: Cosine similarity score bounded in [-1.0, 1.0]. Returns 0.0
+        if either vector is (near) zero or contains non-finite values.
     """
-    norm_a = float(np.linalg.norm(vec_a))
-    norm_b = float(np.linalg.norm(vec_b))
-    
-    # Epsilon / zero-norm protection to prevent divide-by-zero
-    if norm_a == 0.0 or norm_b == 0.0:
+    a = np.asarray(vec_a, dtype=np.float64).ravel()
+    b = np.asarray(vec_b, dtype=np.float64).ravel()
+    if a.shape != b.shape:
+        raise ValueError(f"Vector dimension mismatch: {a.shape} vs {b.shape}")
+
+    norm_a = float(np.linalg.norm(a))
+    norm_b = float(np.linalg.norm(b))
+    if not (np.isfinite(norm_a) and np.isfinite(norm_b)):
         return 0.0
-        
-    dot_product = float(np.dot(vec_a, vec_b))
-    return dot_product / (norm_a * norm_b)
+    if norm_a < _ZERO_NORM_EPS or norm_b < _ZERO_NORM_EPS:
+        return 0.0
+
+    sim = float(np.dot(a, b)) / (norm_a * norm_b)
+    # Floating-point error can push the value marginally outside [-1, 1].
+    return float(np.clip(sim, -1.0, 1.0))
+
+
+def cosine_similarity_matrix(query_vector: np.ndarray, document_vectors: np.ndarray) -> np.ndarray:
+    """
+    Vectorised cosine similarity of one query (shape (D,) or (1, D)) against
+    every row of a document matrix (shape (N, D)). Returns shape (N,).
+
+    Zero-norm rows (and a zero-norm query) score 0.0 instead of raising a
+    divide-by-zero / producing NaN.
+    """
+    q = np.asarray(query_vector, dtype=np.float64)
+    docs = np.asarray(document_vectors, dtype=np.float64)
+
+    if q.ndim == 2 and q.shape[0] == 1:
+        q = q[0]
+    if q.ndim != 1:
+        raise ValueError(f"Query vector must be 1D (D,) or (1, D); got shape {q.shape}")
+    if docs.ndim == 1:
+        docs = docs.reshape(1, -1)
+    if docs.ndim != 2:
+        raise ValueError(f"Document vectors must be 2D (N, D); got shape {docs.shape}")
+    if docs.shape[1] != q.shape[0]:
+        raise ValueError(
+            f"Embedding dimension mismatch: query has {q.shape[0]}, documents have {docs.shape[1]}"
+        )
+
+    q_norm = np.linalg.norm(q)
+    doc_norms = np.linalg.norm(docs, axis=1)
+    if not np.isfinite(q_norm) or q_norm < _ZERO_NORM_EPS:
+        return np.zeros(docs.shape[0], dtype=np.float64)
+
+    denom = doc_norms * q_norm
+    valid = np.isfinite(denom) & (doc_norms >= _ZERO_NORM_EPS)
+    scores = np.zeros(docs.shape[0], dtype=np.float64)
+    scores[valid] = (docs[valid] @ q) / denom[valid]
+    scores = np.nan_to_num(scores, nan=0.0, posinf=0.0, neginf=0.0)
+    return np.clip(scores, -1.0, 1.0)
 
 
 def search_top_k(
@@ -83,19 +131,14 @@ def search_top_k(
     Returns:
         List[Tuple[int, float]]: List of (chunk_index, similarity_score) sorted descending.
     """
-    if len(document_vectors) == 0:
+    if document_vectors is None or len(document_vectors) == 0 or top_k <= 0:
         return []
-        
-    scores: List[Tuple[int, float]] = []
-    
-    for idx, doc_vec in enumerate(document_vectors):
-        sim = cosine_similarity(query_vector, doc_vec)
-        scores.append((idx, sim))
-        
-    # Sort by similarity score in descending order
-    scores.sort(key=lambda x: x[1], reverse=True)
-    
-    return scores[:top_k]
+
+    scores = cosine_similarity_matrix(query_vector, document_vectors)
+    k = min(int(top_k), scores.shape[0])
+    # Stable sort on the negated scores keeps ties in original chunk order.
+    order = np.argsort(-scores, kind="stable")[:k]
+    return [(int(idx), float(scores[idx])) for idx in order]
 
 
 def load_chunks_from_debug_file(file_path: str = "debug_chunks.txt") -> List[str]:
