@@ -27,7 +27,7 @@ from llm_generator import build_grounded_prompt, query_llm_api
 # PAGE CONFIG
 # ─────────────────────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="Enterprise Knowledge Assistant // Digital Retro",
+    page_title="Enterprise Knowledge Assistant",
     page_icon="⚡",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -659,7 +659,7 @@ def main():
 
     # ── Header ──────────────────────────────────────────────────────────────
     st.markdown(
-        '<div class="eka-header">⚡ ENTERPRISE KNOWLEDGE ASSISTANT // DIGITAL RETRO EDITION</div>',
+        '<div class="eka-header">⚡ ENTERPRISE KNOWLEDGE ASSISTANT</div>',
         unsafe_allow_html=True,
     )
 
