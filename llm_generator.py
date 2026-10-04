@@ -39,14 +39,30 @@ MAX_RETRIES = 2               # Extra attempts on 429 / 5xx / timeout
 MAX_RETRY_WAIT_SECONDS = 20   # Cap on a single backoff sleep
 
 
+# Known placeholder values shipped in .env templates — treated as "not set".
+_PLACEHOLDER_KEYS = {
+    "gsk_your_key_here",
+    "your_groq_api_key_here",
+    "<your_api_key>",
+    "YOUR_KEY_HERE",
+}
+
+
 def get_api_key(explicit_key: Optional[str] = None) -> str:
     """
     Resolve the Groq API key: an explicitly supplied key wins, otherwise
-    GROQ_API_KEY from the environment / .env file. Returns "" if neither is set.
+    GROQ_API_KEY from the environment / .env file.
+    Returns "" if the key is missing, empty, or still set to a known placeholder.
     """
+    key = ""
     if explicit_key and explicit_key.strip():
-        return explicit_key.strip()
-    return os.environ.get("GROQ_API_KEY", "").strip()
+        key = explicit_key.strip()
+    else:
+        key = os.environ.get("GROQ_API_KEY", "").strip()
+
+    if key in _PLACEHOLDER_KEYS:
+        return ""   # Treat placeholders the same as a missing key
+    return key
 
 
 def _retry_wait(response: Optional[requests.Response], attempt: int) -> float:
