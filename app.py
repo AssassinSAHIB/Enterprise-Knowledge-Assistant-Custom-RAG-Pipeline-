@@ -183,8 +183,19 @@ html, body, [class*="css"], .stApp {{
     box-shadow: {glass_shadow} !important;
 }}
 [data-testid="stSidebar"] * {{
-    font-family: 'Space Mono', 'Courier New', monospace !important;
     color: {text_primary} !important;
+}}
+[data-testid="stSidebar"] *:not([data-testid="stIconMaterial"]):not([class*="material-symbols"]) {{
+    font-family: 'Space Mono', 'Courier New', monospace !important;
+}}
+
+/* Keep Streamlit's Material icon font so ligatures (e.g. "visibility",
+   "upload") render as icons instead of raw text. */
+[data-testid="stIconMaterial"],
+[class*="material-symbols"] {{
+    font-family: 'Material Symbols Rounded' !important;
+    letter-spacing: normal !important;
+    text-transform: none !important;
 }}
 [data-testid="stSidebar"] .stSelectbox label,
 [data-testid="stSidebar"] .stSlider label,
@@ -232,6 +243,42 @@ html, body, [class*="css"], .stApp {{
     letter-spacing: 0.08em !important;
     text-transform: uppercase !important;
     font-weight: 700 !important;
+}}
+
+/* Input wrapper (holds the field + the password eye toggle). The border
+   lives on the wrapper so the toggle button sits inside the same box. */
+[data-testid="stTextInputRootElement"],
+.stTextInput [data-baseweb="input"] {{
+    background: {input_bg} !important;
+    border: 1px solid {glass_border} !important;
+    border-radius: 8px !important;
+    transition: border-color 0.3s ease, box-shadow 0.3s ease;
+}}
+[data-testid="stTextInputRootElement"]:focus-within,
+.stTextInput [data-baseweb="input"]:focus-within {{
+    border-color: {accent_cyan} !important;
+    box-shadow: 0 0 0 2px {accent_cyan}33 !important;
+}}
+[data-testid="stTextInputRootElement"] input,
+.stTextInput [data-baseweb="input"] input,
+.stTextInput [data-baseweb="base-input"] {{
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+}}
+[data-testid="stTextInputRootElement"] > div,
+[data-testid="stTextInputRootElement"] button,
+.stTextInput [data-baseweb="input"] button {{
+    background: transparent !important;
+    border: none !important;
+}}
+[data-testid="stTextInputRootElement"] button span,
+.stTextInput [data-baseweb="input"] button span {{
+    color: {text_secondary} !important;
+}}
+[data-testid="stTextInputRootElement"] button:hover span,
+.stTextInput [data-baseweb="input"] button:hover span {{
+    color: {accent_cyan} !important;
 }}
 
 /* Password / masked input */
@@ -291,6 +338,22 @@ html, body, [class*="css"], .stApp {{
     backdrop-filter: blur(10px) !important;
     padding: 0.5rem;
     transition: border-color 0.3s ease;
+}}
+[data-testid="stFileUploaderDropzone"] {{
+    background: {input_bg} !important;
+    border-radius: 8px !important;
+}}
+[data-testid="stFileUploaderDropzone"] button {{
+    background: {btn_bg} !important;
+    border: 1px solid {btn_border} !important;
+    color: {btn_text} !important;
+}}
+[data-testid="stFileUploaderDropzone"] button:hover {{
+    border-color: {accent_cyan} !important;
+}}
+[data-testid="stFileUploaderDropzone"] small,
+[data-testid="stFileUploaderDropzoneInstructions"] span {{
+    color: {text_secondary} !important;
 }}
 [data-testid="stFileUploader"]:hover {{
     border-color: {accent_cyan} !important;
