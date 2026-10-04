@@ -8,6 +8,7 @@ direct HTTP POST requests - no LangChain or orchestration framework used.
 """
 
 import os
+import sys
 import re
 import time
 import datetime
@@ -15,6 +16,7 @@ import requests
 from typing import List, Optional, Tuple
 
 try:
+# pyrefly: ignore [missing-import]
     from dotenv import load_dotenv
 except ImportError:  # python-dotenv is optional; fall back to real env vars
     load_dotenv = None
@@ -33,7 +35,7 @@ if load_dotenv is not None:
 # ---------------------------------------------------------------------------
 
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
-DEFAULT_MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
+DEFAULT_MODEL = os.environ.get("GROQ_MODEL", "openai/gpt-oss-20b")
 REQUEST_TIMEOUT_SECONDS = 60  # Hard timeout per API call
 MAX_RETRIES = 2               # Extra attempts on 429 / 5xx / timeout
 MAX_RETRY_WAIT_SECONDS = 20   # Cap on a single backoff sleep
@@ -441,7 +443,8 @@ if __name__ == "__main__":
     print("LLM RESPONSE PREVIEW:")
     print("-" * 60)
     preview_lines = response_text.strip().splitlines()[:10]
-    print("\n".join(preview_lines))
+    safe_preview = "\n".join(preview_lines).encode(sys.stdout.encoding or 'utf-8', 'replace').decode(sys.stdout.encoding or 'utf-8')
+    print(safe_preview)
     if len(response_text.strip().splitlines()) > 10:
         print("  [...truncated - see debug_llm_response.txt for full output]")
     print("=" * 60)
